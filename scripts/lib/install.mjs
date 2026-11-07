@@ -15,13 +15,14 @@ import {
     mkdirSync,
     readdirSync,
     readFileSync,
+    realpathSync,
     rmdirSync,
     rmSync,
     statSync,
     symlinkSync,
     writeFileSync,
 } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const SOURCE = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -110,6 +111,8 @@ export const TOOLS = {
         },
         setup(target, { dryRun, log }) {
             const skills = join(target, '.claude/skills')
+            assertInside(target, skills)
+            assertInside(target, join(target, 'SKILLS.md'))
             if (!existsSync(skills)) {
                 log(`create  .claude/skills/`)
                 if (!dryRun) mkdirSync(skills, { recursive: true })
@@ -130,6 +133,15 @@ export const TOOLS = {
                     )
             }
             if (dryRun) return
+            // Never execute a script the target changed: run it only when it
+            // is byte-identical to the one shipped here.
+            const script = 'scripts/sync-agent-skills.mjs'
+            if (!same(join(SOURCE, script), join(target, script))) {
+                log(
+                    `skip    ${script} differs from the shipped copy; review it, then run: node ${script}`,
+                )
+                return
+            }
             const sync = spawnSync(
                 process.execPath,
                 [join(target, 'scripts/sync-agent-skills.mjs')],
@@ -215,15 +227,43 @@ export function removeHooks(settings, { marker }) {
 
 const same = (a, b) => readFileSync(a).equals(readFileSync(b))
 
+/**
+ * Refuse a path the installer would write or remove when it, or any folder
+ * between it and the target, is a symlink — a planted link must never steer
+ * a write (or rm) outside the repository.
+ */
+export function assertInside(target, path) {
+    const root = realpathSync(target)
+    const rel = relative(target, path)
+    if (rel.startsWith('..') || resolve(target, rel) !== resolve(path))
+        throw new Error(`${path} is outside ${target}`)
+    let dir = target
+    for (const part of rel.split('/')) {
+        dir = join(dir, part)
+        if (isLink(dir))
+            throw new Error(
+                `${relative(target, dir)} is a symlink; refusing to write through it`,
+            )
+        if (!existsSync(dir)) break
+    }
+    const real = existsSync(path) ? realpathSync(path) : null
+    if (real && real !== root && !real.startsWith(root + sep))
+        throw new Error(`${path} resolves outside ${target}`)
+}
+
 export function install(name, target, { force = false, dryRun = false, log = console.log } = {}) {
     const tool = TOOLS[name]
     if (!tool) throw new Error(`unknown tool "${name}"; try: ${Object.keys(TOOLS).join(', ')}`)
     if (resolve(target) === SOURCE)
         throw new Error('the target is ai-tools itself; pass --target <repo>')
+    // Check every path before touching any, so a refusal leaves no half-done install.
+    for (const path of [...tool.files, ...Object.keys(tool.hooks)])
+        assertInside(target, join(target, path))
     let kept = 0
     for (const file of tool.files) {
         const from = join(SOURCE, file)
         const to = join(target, file)
+        assertInside(target, to)
         if (existsSync(to)) {
             if (same(from, to)) {
                 log(`ok      ${file}`)
@@ -243,6 +283,7 @@ export function install(name, target, { force = false, dryRun = false, log = con
     }
     for (const [path, spec] of Object.entries(tool.hooks)) {
         const file = join(target, path)
+        assertInside(target, file)
         const settings = readJson(file)
         if (!mergeHooks(settings, spec)) {
             log(`ok      ${path} hooks`)
@@ -257,6 +298,7 @@ export function install(name, target, { force = false, dryRun = false, log = con
     if (existsSync(agents))
         for (const skill of tool.skills) {
             const link = join(agents, skill)
+            assertInside(target, agents)
             if (existsSync(link) || isLink(link)) continue
             log(`link    .agents/skills/${skill}`)
             if (!dryRun)
@@ -282,9 +324,13 @@ export function uninstall(name, target, { force = false, dryRun = false, log = c
     if (!tool) throw new Error(`unknown tool "${name}"; try: ${Object.keys(TOOLS).join(', ')}`)
     if (resolve(target) === SOURCE)
         throw new Error('the target is ai-tools itself; pass --target <repo>')
+    // Check every path before touching any, so a refusal leaves no half-done install.
+    for (const path of [...tool.files, ...Object.keys(tool.hooks)])
+        assertInside(target, join(target, path))
     for (const [path, spec] of Object.entries(tool.hooks)) {
         const file = join(target, path)
         if (!existsSync(file)) continue
+        assertInside(target, file)
         const settings = readJson(file)
         if (!removeHooks(settings, spec)) continue
         log(`update  ${path} hooks`)
@@ -298,7 +344,8 @@ export function uninstall(name, target, { force = false, dryRun = false, log = c
     }
     for (const file of tool.files) {
         const to = join(target, file)
-        if (!existsSync(to)) continue
+        if (!existsSync(to) && !isLink(to)) continue
+        assertInside(target, to)
         if (!force && !same(join(SOURCE, file), to)) {
             log(`keep    ${file} (changed since install; --force removes it)`)
             continue

@@ -7,6 +7,7 @@ import {
     mkdtempSync,
     readFileSync,
     rmSync,
+    symlinkSync,
     writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -146,4 +147,42 @@ test('uninstall removes what it shipped and keeps the rest', (t) => {
     assert.equal(existsSync(join(dir, '.claude/hooks')), false, 'empty dir removed')
     assert.ok(existsSync(join(dir, 'scripts/lib/other.mjs')), 'other files kept')
     assert.equal(guardEntries(dir).length, 0)
+})
+
+test('a symlinked folder in the target is refused, and nothing is written through it', (t) => {
+    const dir = repo(t)
+    const outside = mkdtempSync(join(tmpdir(), 'ai-tools-outside-'))
+    t.after(() => rmSync(outside, { recursive: true, force: true }))
+    symlinkSync(outside, join(dir, 'scripts'))
+    const out = run(dir, 'install', 'test-queue')
+    assert.equal(out.status, 1)
+    assert.match(out.stderr, /scripts is a symlink/)
+    assert.equal(existsSync(join(outside, 'test-lock.mjs')), false)
+})
+
+test('a symlinked file is not removed through on uninstall', (t) => {
+    const dir = repo(t)
+    run(dir, 'install', 'test-queue')
+    const outside = mkdtempSync(join(tmpdir(), 'ai-tools-outside-'))
+    t.after(() => rmSync(outside, { recursive: true, force: true }))
+    writeFileSync(join(outside, 'victim'), 'keep me')
+    rmSync(join(dir, 'scripts/test-lock.mjs'))
+    symlinkSync(join(outside, 'victim'), join(dir, 'scripts/test-lock.mjs'))
+    const out = run(dir, 'uninstall', 'test-queue', '--force')
+    assert.equal(out.status, 1)
+    assert.equal(readFileSync(join(outside, 'victim'), 'utf8'), 'keep me')
+    assert.equal(guardEntries(dir).length, 1, 'nothing half-uninstalled')
+})
+
+test('skill-sync setup never runs a sync script the target changed', (t) => {
+    const dir = repo(t)
+    mkdirSync(join(dir, 'scripts'))
+    writeFileSync(
+        join(dir, 'scripts/sync-agent-skills.mjs'),
+        "require('fs').writeFileSync('pwned', '')\n",
+    )
+    const out = run(dir, 'install', 'skill-sync')
+    assert.equal(out.status, 0, out.stderr)
+    assert.match(out.stdout, /^skip +scripts\/sync-agent-skills\.mjs differs/m)
+    assert.equal(existsSync(join(dir, 'pwned')), false)
 })
