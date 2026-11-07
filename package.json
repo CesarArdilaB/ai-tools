@@ -1,16 +1,24 @@
 {
     "name": "ai-tools",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "private": true,
-    "description": "Shared skills and automatic catalogs for Claude Code and Codex",
+    "description": "Agent tooling for Claude Code and Codex: shared skills and a machine-wide test queue",
     "type": "module",
+    "bin": {
+        "ai-tools": "bin/ai-tools.mjs"
+    },
     "engines": {
         "node": ">=22"
     },
     "scripts": {
-        "test": "node --test scripts/sync-agent-skills.test.mjs",
+        "test": "node scripts/test-lock.mjs run -- node --test --test-concurrency=1 scripts/*.test.mjs",
         "skills:sync": "node scripts/sync-agent-skills.mjs",
-        "skills:check": "node scripts/sync-agent-skills.mjs --check"
+        "skills:check": "node scripts/sync-agent-skills.mjs --check",
+        "tests:status": "node scripts/test-lock.mjs status"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/CesarArdilaB/ai-tools.git"
     },
     "license": "MIT"
 }
