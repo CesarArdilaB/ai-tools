@@ -16,6 +16,13 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const source = join(root, '.claude/skills')
 const destination = join(root, '.agents/skills')
+// Never write through a planted link: the catalog and the folders that hold
+// the links must be real paths inside this repository.
+for (const path of ['.agents', '.agents/skills', 'SKILLS.md'])
+    assert(
+        !lstatSync(join(root, path), { throwIfNoEntry: false })?.isSymbolicLink(),
+        `${path} is a symlink; refusing to write through it`,
+    )
 const check = process.argv.includes('--check')
 const hook = process.argv.includes('--hook')
 assert(

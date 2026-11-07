@@ -111,8 +111,10 @@ export const TOOLS = {
         },
         setup(target, { dryRun, log }) {
             const skills = join(target, '.claude/skills')
-            assertInside(target, skills)
-            assertInside(target, join(target, 'SKILLS.md'))
+            // The sync script writes the catalog and creates links under
+            // .agents/skills: none of them may be a planted symlink.
+            for (const path of ['.claude/skills', 'SKILLS.md', '.agents/skills'])
+                assertInside(target, join(target, path))
             if (!existsSync(skills)) {
                 log(`create  .claude/skills/`)
                 if (!dryRun) mkdirSync(skills, { recursive: true })
@@ -257,7 +259,11 @@ export function install(name, target, { force = false, dryRun = false, log = con
     if (resolve(target) === SOURCE)
         throw new Error('the target is ai-tools itself; pass --target <repo>')
     // Check every path before touching any, so a refusal leaves no half-done install.
-    for (const path of [...tool.files, ...Object.keys(tool.hooks)])
+    for (const path of [
+        ...tool.files,
+        ...Object.keys(tool.hooks),
+        '.agents/skills',
+    ])
         assertInside(target, join(target, path))
     let kept = 0
     for (const file of tool.files) {
@@ -295,10 +301,10 @@ export function install(name, target, { force = false, dryRun = false, log = con
     // Codex discovers skills through .agents/skills; link ours when the
     // target uses that folder.
     const agents = join(target, '.agents/skills')
+    assertInside(target, agents)
     if (existsSync(agents))
         for (const skill of tool.skills) {
             const link = join(agents, skill)
-            assertInside(target, agents)
             if (existsSync(link) || isLink(link)) continue
             log(`link    .agents/skills/${skill}`)
             if (!dryRun)
@@ -325,7 +331,11 @@ export function uninstall(name, target, { force = false, dryRun = false, log = c
     if (resolve(target) === SOURCE)
         throw new Error('the target is ai-tools itself; pass --target <repo>')
     // Check every path before touching any, so a refusal leaves no half-done install.
-    for (const path of [...tool.files, ...Object.keys(tool.hooks)])
+    for (const path of [
+        ...tool.files,
+        ...Object.keys(tool.hooks),
+        '.agents/skills',
+    ])
         assertInside(target, join(target, path))
     for (const [path, spec] of Object.entries(tool.hooks)) {
         const file = join(target, path)

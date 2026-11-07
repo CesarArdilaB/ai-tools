@@ -150,3 +150,24 @@ test('both agent configurations register the same updater for edits and turn com
     }
     assert.equal(new Set(commands).size, 1)
 })
+
+test('refuses to write through a symlinked .agents folder or catalog', (t) => {
+    for (const planted of ['.agents', 'SKILLS.md']) {
+        const { root, skill, run } = fixture(t)
+        skill('alpha')
+        const outside = mkdtempSync(join(tmpdir(), 'ai-tools-outside-'))
+        t.after(() => rmSync(outside, { recursive: true, force: true }))
+        const victim = join(outside, planted === 'SKILLS.md' ? 'catalog.md' : 'agents')
+        if (planted === 'SKILLS.md') {
+            writeFileSync(victim, initial)
+            rmSync(join(root, 'SKILLS.md'))
+        } else mkdirSync(join(victim, 'skills'), { recursive: true })
+        symlinkSync(victim, join(root, planted))
+        const result = run()
+        assert.notEqual(result.status, 0, planted)
+        assert.match(result.stderr + result.stdout, /is a symlink/, planted)
+        if (planted === 'SKILLS.md')
+            assert.equal(readFileSync(victim, 'utf8'), initial)
+        else assert.equal(existsSync(join(victim, 'skills/alpha')), false)
+    }
+})

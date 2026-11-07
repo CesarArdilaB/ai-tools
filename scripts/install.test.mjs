@@ -5,6 +5,7 @@ import {
     lstatSync,
     mkdirSync,
     mkdtempSync,
+    readdirSync,
     readFileSync,
     rmSync,
     symlinkSync,
@@ -185,4 +186,17 @@ test('skill-sync setup never runs a sync script the target changed', (t) => {
     assert.equal(out.status, 0, out.stderr)
     assert.match(out.stdout, /^skip +scripts\/sync-agent-skills\.mjs differs/m)
     assert.equal(existsSync(join(dir, 'pwned')), false)
+})
+
+test('a symlinked .agents folder is refused before any link is made through it', (t) => {
+    const dir = repo(t)
+    const outside = mkdtempSync(join(tmpdir(), 'ai-tools-outside-'))
+    t.after(() => rmSync(outside, { recursive: true, force: true }))
+    mkdirSync(join(outside, 'skills'))
+    symlinkSync(outside, join(dir, '.agents'))
+    const out = run(dir, 'install', 'test-queue', 'skill-sync')
+    assert.equal(out.status, 1)
+    assert.match(out.stderr, /\.agents is a symlink/)
+    assert.deepEqual(readdirSync(join(outside, 'skills')), [])
+    assert.equal(existsSync(join(dir, 'scripts')), false, 'nothing installed')
 })
